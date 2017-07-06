@@ -1,3 +1,9 @@
+char adminPasscode[6] = {1, 2, 3, 4, 5, 6};
+char* guestPasscodes[] = {
+  (char[]){1, 2, 3, 4, 5, 6},
+  (char[]){1, 2, 3, 4, 5, 6},
+};
+
 const byte CODE_LENGTH = 6;
 
 const char FIRST_VAL = 'a';
@@ -7,10 +13,10 @@ const byte BUTTON_INPUT = 13;
 
 
 enum STATE {NONE, INPUT_ADMIN, INPUT_GUEST, RESET_PASSCODE, ADD_ITEM};
-enum KEYPAD {KEY_1, KEY_2, KEY_3, KEY_4, ADD_ITEM};
+enum KEYPAD {KEY_1, KEY_2, KEY_3, KEY_4, KEY_ADD_ITEM};
 
 
-STATE currentState;
+STATE state;
 
 bool locked;
 
@@ -18,14 +24,19 @@ void setup() {
   // put your setup code here, to run once:
 
   locked = true;
-  currentState = NONE;
+  state = NONE;
 
   attachInterrupt(0, buttonPushed, RISING);
 }
 
 void loop() {
+  // pressing guest button on safe's display starts guestMode function
+  // pressing admin button on safe's display starts adminMode function
+
+  // automatically locks after X seconds once safe door is closed
+  
   if (state != NONE) {
-    if (state = )
+    if (true) {}
   }
 }
 
@@ -43,6 +54,14 @@ void buttonPushed() {
   else if (pinInput < 20) {   lastButton = 8; }
   else if (pinInput < 20) {   lastButton = 9; }
   else if (pinInput < 20) {   lastButton = 10; }
+}
+
+void guestMode(){    // mode where only temp. code can unlock the safe
+  
+}
+
+void adminMode(){   // mode where regular admin. code can unlock the safe
+
 }
 
 
