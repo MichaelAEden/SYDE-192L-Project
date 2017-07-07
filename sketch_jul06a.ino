@@ -14,11 +14,15 @@ enum KEY {KEY_NONE,
 
 // Code
 const byte CODE_LENGTH = 6;
-char adminPasscode[] = {1, 2, 3, 4, 5, 6};
-char* guestPasscodes[] = {
-  (char[]){1, 2, 3, 4, 5, 6},
-  (char[]){1, 2, 3, 4, 5, 6},
-};
+String adminPasscode = '123456';
+String guestPasscode[] = {'836204', '273027', '284027', '194629', '957368', '325492'};
+
+//char adminPasscode[] = {1, 2, 3, 4, 5, 6};	// this is alternative to array of strings
+//char* guestPasscodes[] = {
+  //(char[]){1, 2, 3, 4, 5, 6},
+  //(char[]){1, 2, 3, 4, 5, 6},
+//};
+
 KEY codeEntry[CODE_LENGTH];
 byte codeNumsEntered = 0;
 
@@ -68,10 +72,10 @@ void loop() {
   if (state != NONE) {
 
     // If we are checking input for a key combination
-    if (state == INPUT_ADMIN || INPUT_GUEST) {
+    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
       
       // If the last button pushed was a number
-      if (getLastButton() >= KEY_1 && getLastButton() >= KEY_9) {
+      if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
 
         // If too many numbers are entered, passcode is invalid
         if (codeNumsEntered >= CODE_LENGTH) {
