@@ -1,3 +1,8 @@
+#include <LiquidCrystal.h>
+#include <Arduino.h>
+
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
 /*  --------------------------------------------
     -------   Declaring constants
     -------------------------------------------- */
@@ -10,12 +15,10 @@ enum KEY {KEY_NONE,
           KEY_ADD_ITEM, KEY_GUEST_MODE, KEY_ADMIN_MODE
 };
 
-
-
 // Code
 const byte CODE_LENGTH = 6;
 String adminPasscode = '123456';
-String guestPasscode[] = {'836204', '273027', '284027', '194629', '957368', '325492'};
+String guestPasscodes[] = {'836204', '273027', '284027', '194629', '957368', '325492'};
 
 //char adminPasscode[] = {1, 2, 3, 4, 5, 6};	// this is alternative to array of strings
 //char* guestPasscodes[] = {
@@ -150,4 +153,8 @@ void adminMode(){   // mode where regular admin. code can unlock the safe
 
 }
 
-
+void displayLetters(){
+  lcd.print("hello, world!");
+  lcd.setCursor(0, 1);
+  lcd.print("12345");
+}
