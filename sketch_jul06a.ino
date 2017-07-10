@@ -1,8 +1,6 @@
 #include <LiquidCrystal.h>
 #include <Arduino.h>
 
-LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
-
 /*  --------------------------------------------
     -------   Declaring constants
     -------------------------------------------- */
@@ -15,7 +13,8 @@ enum KEY {KEY_NONE,
           KEY_ADD_ITEM, KEY_GUEST_MODE, KEY_ADMIN_MODE
 };
 
-// Code
+
+// Safe combination
 const byte CODE_LENGTH = 6;
 String adminPasscode = "123456";
 String guestPasscodes[] = {"836204", "273027", "284027", "194629", "957368", "325492"};
@@ -31,9 +30,17 @@ byte codeNumsEntered = 0;
 
 
 
-// Arduino input ports
+// Adding item 
+const byte ALPHABET_LENGTH = 26;
+const byte SCREEN_LIMIT = 12;     // Number of characters which can be displayed in one row of the LED
+
+
+
+// Arduino ports
 const byte BUTTON_INPUT = 13;
 const byte INTERRUPT_INPUT = 0;
+
+const byte OUTPUT_LOCKED = 10;
 
 
 
@@ -47,19 +54,35 @@ volatile long lastInputTime = 0;    // Time recorded at last button press
 const int TIMEOUT = 30; // in seconds
 
 
+
 /*  --------------------------------------------
-    -------   Global variables
+    -------   Safe state variables
     -------------------------------------------- */
 
 STATE state;  // Current state safe is in (e.g.: guest mode, reset passcode, etc.)
 bool locked;  // Is safe currently locked
 bool validPasscode = false; // Whether passcode entered was correct
 
+
+
+/*  --------------------------------------------
+    -------   LCD Display setup
+    -------------------------------------------- */
+
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+int pointer = 0;  // 0 is "A"
+int scrollPos = 0;
+String userInput = "";
+
+
+
 void setup() {
   locked = true;
   state = NONE;
 
   attachInterrupt(INTERRUPT_INPUT, buttonPushed, RISING);
+  lcd.begin(16,2);
 }
 
 /*  --------------------------------------------
@@ -76,16 +99,18 @@ void loop() {
 
     // If we are checking input for a key combination
     if (state == INPUT_ADMIN || state == INPUT_GUEST) {
-      updateInput();
+      updateInputCombination();
     }
 
     else if (state == ADD_ITEM) {
-      
+      updateAddItem();
     }
   }
+
+  
 }
 
-void updateInput() {
+void updateInputCombination() {
   
   // If the last button pushed was a number
   if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
@@ -108,12 +133,51 @@ void updateInput() {
   }
 }
 
+// Updates a user adding an item to the safe
+void updateAddItem() {
+  int x = analogRead(0);
+  
+  if (x < 100)
+      pointer++;    // Go right
+  else if (x < 400)
+      userInput += char(pointer + int('a'));  // Adds selected character onto item name
+  else if (x < 600)
+      pointer--;    // Go left
+  else if (x < 800)
+      boolean nothing = false;
+      // Do something
+
+  String alphabet = "";
+
+  if (pointer < 0)                 pointer = ALPHABET_LENGTH - 1;
+  if (pointer >= ALPHABET_LENGTH)  pointer = 0;
+  
+  while (pointer > scrollPos + SCREEN_LIMIT) { scrollPos++; }
+  while (pointer < scrollPos)                { scrollPos--; }
+  
+  for (int i = scrollPos; i < SCREEN_LIMIT + scrollPos; i++) {
+    if (pointer == i)   alphabet += ' ' + char(i + int('A')) + ' ';
+    else                alphabet += char(i + int('a'));
+  }
+  
+  lcd.setCursor(0, 0);
+  lcd.print("Add item:" + userInput);
+  lcd.setCursor(0, 1);
+  lcd.print(alphabet);
+}
+
 /*  --------------------------------------------
     -------   Safe handlers
     -------------------------------------------- */
 
 void unlock() {
   locked = false;
+  digitalWrite(OUTPUT_LOCKED, LOW);
+}
+
+void lock() {
+  locked = true;
+  digitalWrite(OUTPUT_LOCKED, HIGH);
 }
 
 /*  --------------------------------------------
@@ -145,10 +209,4 @@ KEY getLastButton() {
 // Returns time since last button was pushed
 long timeSinceLastButton() {
   return millis() - lastInputTime;
-}
-
-void displayLetters(){
-  lcd.print("hello, world!");
-  lcd.setCursor(0, 1);
-  lcd.print("12345");
 }
