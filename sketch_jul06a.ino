@@ -17,8 +17,8 @@ enum KEY {KEY_NONE,
 
 // Code
 const byte CODE_LENGTH = 6;
-String adminPasscode = '123456';
-String guestPasscodes[] = {'836204', '273027', '284027', '194629', '957368', '325492'};
+String adminPasscode = "123456";
+String guestPasscodes[] = {"836204", "273027", "284027", "194629", "957368", "325492"};
 
 //char adminPasscode[] = {1, 2, 3, 4, 5, 6};	// this is alternative to array of strings
 //char* guestPasscodes[] = {
@@ -76,42 +76,44 @@ void loop() {
 
     // If we are checking input for a key combination
     if (state == INPUT_ADMIN || state == INPUT_GUEST) {
+      updateInput();
+    }
+
+    else if (state == ADD_ITEM) {
       
-      // If the last button pushed was a number
-      if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
-
-        // If too many numbers are entered, passcode is invalid
-        if (codeNumsEntered >= CODE_LENGTH) {
-          validPasscode = false;
-        }
-
-        // Otherwise, add the last number pushed to an array
-        else {
-          codeEntry[codeNumsEntered] = getLastButton();
-          codeNumsEntered++;
-
-          // If all numbers have been entered, check if passcode is correct
-          if (codeNumsEntered == CODE_LENGTH) {
-
-            validPasscode = true;
-            for (byte i = 0; i < CODE_LENGTH; i++) {
-              if (state == INPUT_ADMIN) {
-                 if (codeEntry[i] != adminPasscode[i]) validPasscode = false;
-              }
-              else if (state == INPUT_GUEST) {
-                 if (codeEntry[i] != adminPasscode[i]) validPasscode = false;
-              }
-            }
-          }
-        }
-
-        
-      }
-      else {
-        // Reset state
-      }
     }
   }
+}
+
+void updateInput() {
+  
+  // If the last button pushed was a number
+  if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
+
+    if (state == INPUT_ADMIN) {
+       if (getLastButton() != codeEntry[codeNumsEntered]) validPasscode = false;
+    }
+    else if (state == INPUT_GUEST) {
+       if (getLastButton() != adminPasscode[codeNumsEntered]) validPasscode = false;
+    }
+    
+    codeNumsEntered++;
+
+    // If all numbers have been entered, check if passcode is correct
+    if (codeNumsEntered == CODE_LENGTH && validPasscode) unlock();
+    
+  }
+  else {
+    // Reset state
+  }
+}
+
+/*  --------------------------------------------
+    -------   Safe handlers
+    -------------------------------------------- */
+
+void unlock() {
+  locked = false;
 }
 
 /*  --------------------------------------------
@@ -143,14 +145,6 @@ KEY getLastButton() {
 // Returns time since last button was pushed
 long timeSinceLastButton() {
   return millis() - lastInputTime;
-}
-
-void guestMode(){    // mode where only temp. code can unlock the safe
-  
-}
-
-void adminMode(){   // mode where regular admin. code can unlock the safe
-
 }
 
 void displayLetters(){
