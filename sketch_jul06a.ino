@@ -37,7 +37,7 @@ const byte SCREEN_LIMIT = 12;     // Number of characters which can be displayed
 
 
 // Arduino ports
-const byte BUTTON_INPUT = 13;
+const byte BUTTON_INPUT = A1;
 const byte INTERRUPT_INPUT = 0;
 
 const byte OUTPUT_LOCKED = 10;
@@ -78,11 +78,15 @@ String userInput = "";
 
 
 void setup() {
+  Serial.begin(9600);
+  
   locked = true;
-  state = NONE;
+  state = INPUT_ADMIN;
 
   attachInterrupt(INTERRUPT_INPUT, buttonPushed, RISING);
   lcd.begin(16,2);
+
+  Serial.println("BEGINNNIGNNGN");
 }
 
 /*  --------------------------------------------
@@ -111,6 +115,8 @@ void loop() {
 }
 
 void updateInputCombination() {
+
+  lastInputVoltage = analogRead(BUTTON_INPUT);
   
   // If the last button pushed was a number
   if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
@@ -139,29 +145,48 @@ void updateAddItem() {
   
   if (x < 100)
       pointer++;    // Go right
-  else if (x < 400)
-      userInput += char(pointer + int('a'));  // Adds selected character onto item name
+  else if (x < 200)
+        userInput += char(pointer + int('a'));  // Adds selected character onto item name
+  else if (x < 400) {
+    if (userInput.length() != 0) {
+      String newInput = "";
+      for (int i = 0; i < userInput.length() - 1; i++) {
+        newInput += userInput[i];  // Delete character
+      }
+      userInput = newInput;
+    }
+  }
   else if (x < 600)
       pointer--;    // Go left
   else if (x < 800)
       boolean nothing = false;
       // Do something
 
+  if (x < 1023) {
+    delay(200);
+  }
+
   String alphabet = "";
 
-  if (pointer < 0)                 pointer = ALPHABET_LENGTH - 1;
-  if (pointer >= ALPHABET_LENGTH)  pointer = 0;
+  if (pointer < 0) {
+    pointer = ALPHABET_LENGTH - 1;
+    scrollPos = ALPHABET_LENGTH - SCREEN_LIMIT;
+  }
+  if (pointer >= ALPHABET_LENGTH) {
+    pointer = 0;
+    scrollPos = 0;
+  }
   
-  while (pointer > scrollPos + SCREEN_LIMIT) { scrollPos++; }
-  while (pointer < scrollPos)                { scrollPos--; }
+  while (pointer > scrollPos + SCREEN_LIMIT - 1) { scrollPos++; }
+  while (pointer < scrollPos)                    { scrollPos--; }
   
   for (int i = scrollPos; i < SCREEN_LIMIT + scrollPos; i++) {
-    if (pointer == i)   alphabet += ' ' + char(i + int('A')) + ' ';
-    else                alphabet += char(i + int('a'));
+    if (pointer == i)   { alphabet += char(i + int('A')); }
+    else                { alphabet += char(i + int('a')); }
   }
   
   lcd.setCursor(0, 0);
-  lcd.print("Add item:" + userInput);
+  lcd.print("Item:" + userInput + "             ");
   lcd.setCursor(0, 1);
   lcd.print(alphabet);
 }
@@ -194,10 +219,12 @@ void buttonPushed() {
 KEY getLastButton() {
   KEY lastButton = KEY_NONE;
   
-  if (lastInputVoltage < 10) {        lastButton = KEY_1; }
+  if (lastInputVoltage > 0)       {   lastButton = KEY_1; }
   else if (lastInputVoltage < 20) {   lastButton = KEY_1; }
   else if (lastInputVoltage < 30) {   lastButton = KEY_1; }
   // TODO: measure voltages, extend to all keys
+
+  lastInputVoltage = 0;
   
   return lastButton;
 }
