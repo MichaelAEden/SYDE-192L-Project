@@ -29,15 +29,25 @@ KEY codeEntry[CODE_LENGTH];
 byte codeNumsEntered = 0;
 
 
-
 // Adding item 
-const byte ALPHABET_LENGTH = 26;
+const byte GRID_WIDTH = 4;
+const byte GRID_HEIGHT = 4;
 const byte SCREEN_LIMIT = 12;     // Number of characters which can be displayed in one row of the LED
+int selectionState = 0;           // O if choosing x, 1 if choosing y
+int gridSelectX = -1;
+int gridSelectY = -1;
+
+bool items[][GRID_WIDTH] = {
+  {false, false, false, false},
+  {false, false, false, false},
+  {false, false, false, false},
+  {false, false, false, false},
+}; // Item matrix
 
 
 
 // Arduino ports
-const byte BUTTON_INPUT = A1;
+const byte BUTTON_INPUT = A0;
 const byte INTERRUPT_INPUT = 0;
 
 const byte OUTPUT_LOCKED = 10;
@@ -50,8 +60,13 @@ volatile byte lastInputVoltage = 0; // Voltage recorded from last button pressed
 volatile long lastInputTime = 0;    // Time recorded at last button press 
 
 
-// Timeout
+// Timer
 const int TIMEOUT = 30; // in seconds
+
+volatile long timerOverflow = 0;
+
+const int SCALING_FACTOR = 1;
+const long TIMER_SIZE = 65536;
 
 
 
@@ -72,7 +87,6 @@ bool validPasscode = false; // Whether passcode entered was correct
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 
 int pointer = 0;  // 0 is "A"
-int scrollPos = 0;
 String userInput = "";
 
 
@@ -83,7 +97,21 @@ void setup() {
   locked = true;
   state = INPUT_ADMIN;
 
-  attachInterrupt(INTERRUPT_INPUT, buttonPushed, RISING);
+  cli();
+
+  // Reset all Timer1 registers
+  TCNT1 = 0;
+  TCCR1A = 0;
+  TCCR1B = 0;
+
+  // Trigger timer reset at 
+  OCR1A = TIMER_SIZE - 1;
+
+  TIMSK1 |= (7 >> 0);
+
+  sei();
+
+  attachInterrupt(INTERRUPT_INPUT, buttonPushed, HIGH);
   lcd.begin(16,2);
 
   Serial.println("BEGINNNIGNNGN");
@@ -94,22 +122,26 @@ void setup() {
     -------------------------------------------- */
     
 void loop() {
-  // pressing guest button on safe's display starts guestMode function
-  // pressing admin button on safe's display starts adminMode function
-
-  // automatically locks after X seconds once safe door is closed
-  
-  if (state != NONE) {
-
-    // If we are checking input for a key combination
-    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
-      updateInputCombination();
-    }
-
-    else if (state == ADD_ITEM) {
-      updateAddItem();
-    }
+  if (analogRead(0) > 10) {
+    Serial.println(timeSinceReset());
   }
+  
+//  // pressing guest button on safe's display starts guestMode function
+//  // pressing admin button on safe's display starts adminMode function
+//
+//  // automatically locks after X seconds once safe door is closed
+//  
+//  if (state != NONE) {
+//
+//    // If we are checking input for a key combination
+//    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
+//      updateInputCombination();
+//    }
+//
+//    else if (state == ADD_ITEM) {
+//      updateAddItem();
+//    }
+//  }
 
   
 }
@@ -143,24 +175,31 @@ void updateInputCombination() {
 void updateAddItem() {
   int x = analogRead(0);
   
-  if (x < 100)
-      pointer++;    // Go right
-  else if (x < 200)
-        userInput += char(pointer + int('a'));  // Adds selected character onto item name
-  else if (x < 400) {
-    if (userInput.length() != 0) {
-      String newInput = "";
-      for (int i = 0; i < userInput.length() - 1; i++) {
-        newInput += userInput[i];  // Delete character
-      }
-      userInput = newInput;
-    }
+  if (x < 100) {
+    pointer++;    // Go right
   }
-  else if (x < 600)
-      pointer--;    // Go left
-  else if (x < 800)
-      boolean nothing = false;
-      // Do something
+  else if (x < 200) {
+    if (selectionState == 0) { 
+      gridSelectX = pointer;
+      selectionState++;
+    }
+    
+    else if (selectionState == 1) { 
+      gridSelectY = pointer; 
+      toggleItemGrid(gridSelectX, gridSelectY);
+      
+      gridSelectX = -1;
+      gridSelectY = -1;
+
+      selectionState = 0;
+    }
+    
+    pointer = 0;
+  }
+  
+  else if (x < 600) {
+    pointer--;    // Go left
+  }
 
   if (x < 1023) {
     delay(200);
@@ -168,25 +207,25 @@ void updateAddItem() {
 
   String alphabet = "";
 
-  if (pointer < 0) {
-    pointer = ALPHABET_LENGTH - 1;
-    scrollPos = ALPHABET_LENGTH - SCREEN_LIMIT;
+  // Grid uses alphabet horizontally, numbers vertically
+  if (selectionState == 0) {
+    for (int i = 0; i < GRID_WIDTH; i++) {
+      if (pointer == i)   { alphabet += char(i + int('A')); }
+      else                { alphabet += char(i + int('a')); }
+    }
   }
-  if (pointer >= ALPHABET_LENGTH) {
-    pointer = 0;
-    scrollPos = 0;
-  }
-  
-  while (pointer > scrollPos + SCREEN_LIMIT - 1) { scrollPos++; }
-  while (pointer < scrollPos)                    { scrollPos--; }
-  
-  for (int i = scrollPos; i < SCREEN_LIMIT + scrollPos; i++) {
-    if (pointer == i)   { alphabet += char(i + int('A')); }
-    else                { alphabet += char(i + int('a')); }
+  else {
+    for (int i = 0; i < GRID_WIDTH; i++) {
+      if (pointer == i)   { alphabet += char(i + int('1')); }
+    }
   }
   
   lcd.setCursor(0, 0);
-  lcd.print("Item:" + userInput + "             ");
+
+//  String outputString = "Withdrawing Item: "
+//    + (gridSelectX != -1) ? char(gridSelectX + int('A')) : ' '
+//    + (gridSelectY != -1) ? char(gridSelectY + int('1')) : ' '
+  //lcd.print(outputString);
   lcd.setCursor(0, 1);
   lcd.print(alphabet);
 }
@@ -205,13 +244,19 @@ void lock() {
   digitalWrite(OUTPUT_LOCKED, HIGH);
 }
 
+void toggleItemGrid(int x, int y) {
+  items[x][y] = !items[x][y];
+}
+
 /*  --------------------------------------------
     -------   Button handlers
     -------------------------------------------- */
 
 void buttonPushed() {
   lastInputVoltage = analogRead(BUTTON_INPUT);
-  lastInputTime = millis();
+  lastInputTime = timeSinceReset();
+
+  Serial.println("BUTTON PUSHED!!!!!!!!");
 }
 
 // Returns the ID of the last button that was pressed,
@@ -235,5 +280,21 @@ KEY getLastButton() {
 
 // Returns time since last button was pushed
 long timeSinceLastButton() {
-  return millis() - lastInputTime;
+  return timeSinceReset() - lastInputTime;
 }
+
+long timeSinceReset() {
+  // 250 clock cycles per millisecond with default scaling factor
+  return (timerOverflow * TIMER_SIZE + TCNT1) / 250;
+}
+
+void resetTimer() {
+  TCNT1 = 0;
+}
+
+// Called when the timer reaches 10000
+ISR (TIMER1_COMPA_vect) {
+ timerOverflow++;
+ TCNT1 = 0;
+}
+
