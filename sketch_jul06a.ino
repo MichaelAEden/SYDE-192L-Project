@@ -30,18 +30,17 @@ byte codeNumsEntered = 0;
 
 
 // Adding item 
-const byte GRID_WIDTH = 4;
-const byte GRID_HEIGHT = 4;
+const byte GRID_WIDTH = 3;
+const byte GRID_HEIGHT = 2;
 const byte SCREEN_LIMIT = 12;     // Number of characters which can be displayed in one row of the LED
 int selectionState = 0;           // O if choosing x, 1 if choosing y
 int gridSelectX = -1;
 int gridSelectY = -1;
 
 bool items[][GRID_WIDTH] = {
-  {false, false, false, false},
-  {false, false, false, false},
-  {false, false, false, false},
-  {false, false, false, false},
+  {false, false, false},
+  {false, false, false},
+  {false, false, false},
 }; // Item matrix
 
 
@@ -65,9 +64,9 @@ const int TIMEOUT = 30; // in seconds
 
 volatile long timerOverflow = 0;
 
-const int SCALING_FACTOR = 1;
-const long TIMER_SIZE = 65536;
-
+const int SCALING_FACTOR = 256;
+const int TIMER_FREQUENCY = 16000 / SCALING_FACTOR;  // Timer clock frequency in cycles per millisecond
+const long TIMER_RESET_INTERRUPT = 65536 / 2;
 
 
 /*  --------------------------------------------
@@ -77,6 +76,8 @@ const long TIMER_SIZE = 65536;
 STATE state;  // Current state safe is in (e.g.: guest mode, reset passcode, etc.)
 bool locked;  // Is safe currently locked
 bool validPasscode = false; // Whether passcode entered was correct
+
+bool shouldPrint = false;
 
 
 
@@ -95,9 +96,11 @@ void setup() {
   Serial.begin(9600);
   
   locked = true;
-  state = INPUT_ADMIN;
+  state = ADD_ITEM;
 
-  cli();
+  cli();  // Disables interrupt
+
+  for(int i = 1; i <= 5; i++) {   pinMode(i, OUTPUT);   }
 
   // Reset all Timer1 registers
   TCNT1 = 0;
@@ -105,16 +108,17 @@ void setup() {
   TCCR1B = 0;
 
   // Trigger timer reset at 
-  OCR1A = TIMER_SIZE - 1;
+  OCR1A = TIMER_RESET_INTERRUPT;
+  TCCR1B |= (4 >> 0);   // Default setting on Timer1 is 4 (100)
 
   TIMSK1 |= (7 >> 0);
 
-  sei();
+  sei();  // Enables interrupts
 
-  attachInterrupt(INTERRUPT_INPUT, buttonPushed, HIGH);
+  // attachInterrupt(INTERRUPT_INPUT, buttonPushed, HIGH);
   lcd.begin(16,2);
 
-  Serial.println("BEGINNNIGNNGN");
+  Serial.println("BEGIN");
 }
 
 /*  --------------------------------------------
@@ -122,26 +126,22 @@ void setup() {
     -------------------------------------------- */
     
 void loop() {
-  if (analogRead(0) > 10) {
-    Serial.println(timeSinceReset());
-  }
+  // pressing guest button on safe's display starts guestMode function
+  // pressing admin button on safe's display starts adminMode function
+
+  // automatically locks after X seconds once safe door is closed
   
-//  // pressing guest button on safe's display starts guestMode function
-//  // pressing admin button on safe's display starts adminMode function
-//
-//  // automatically locks after X seconds once safe door is closed
-//  
-//  if (state != NONE) {
-//
-//    // If we are checking input for a key combination
-//    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
-//      updateInputCombination();
-//    }
-//
-//    else if (state == ADD_ITEM) {
-//      updateAddItem();
-//    }
-//  }
+  if (state != NONE) {
+
+    // If we are checking input for a key combination
+    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
+      updateInputCombination();
+    }
+
+    else if (state == ADD_ITEM) {
+      updateAddItem();
+    }
+  }
 
   
 }
@@ -173,38 +173,12 @@ void updateInputCombination() {
 
 // Updates a user adding an item to the safe
 void updateAddItem() {
-  int x = analogRead(0);
-  
-  if (x < 100) {
-    pointer++;    // Go right
-  }
-  else if (x < 200) {
-    if (selectionState == 0) { 
-      gridSelectX = pointer;
-      selectionState++;
-    }
-    
-    else if (selectionState == 1) { 
-      gridSelectY = pointer; 
-      toggleItemGrid(gridSelectX, gridSelectY);
-      
-      gridSelectX = -1;
-      gridSelectY = -1;
 
-      selectionState = 0;
-    }
-    
-    pointer = 0;
-  }
-  
-  else if (x < 600) {
-    pointer--;    // Go left
-  }
+  updateLCDOutput();
+  updateLCDInput();
+}
 
-  if (x < 1023) {
-    delay(200);
-  }
-
+void updateLCDOutput() {
   String alphabet = "";
 
   // Grid uses alphabet horizontally, numbers vertically
@@ -221,13 +195,58 @@ void updateAddItem() {
   }
   
   lcd.setCursor(0, 0);
-
-//  String outputString = "Withdrawing Item: "
-//    + (gridSelectX != -1) ? char(gridSelectX + int('A')) : ' '
-//    + (gridSelectY != -1) ? char(gridSelectY + int('1')) : ' '
-  //lcd.print(outputString);
+  lcd.print(F("Add Item: "));
+  
+  if (gridSelectX != -1) {                        lcd.print(char(gridSelectX + int('A'))); }
+  if (gridSelectY != -1) { lcd.setCursor(11, 0);  lcd.print(char(gridSelectY + int('1'))); }
+  
   lcd.setCursor(0, 1);
   lcd.print(alphabet);
+}
+
+void updateLCDInput() {
+  int x = analogRead(0);
+  
+  if (x < 100) {
+    pointer++;    // Go right
+  }
+  else if (x < 200) {
+    if (selectionState == 0) { 
+      gridSelectX = pointer;
+      selectionState++;
+      lcd.clear();
+    }
+    
+    else if (selectionState == 1) { 
+      gridSelectY = pointer; 
+      toggleItemGrid(gridSelectX, gridSelectY);
+      
+      updateLCDOutput(); // So user can see which grid spot they've selected
+      delay(500);
+      
+      gridSelectX = -1;
+      gridSelectY = -1;
+
+      selectionState = 0;
+
+      showItemGrid();
+      lcd.clear();
+    }
+    
+    pointer = 0;
+  }
+  
+  else if (x < 600) {
+    pointer--;    // Go left
+  }
+
+  if (pointer < 0) {  pointer = 0; }
+  if (pointer >= GRID_WIDTH - 1 && selectionState == 0) { pointer = GRID_WIDTH - 1; }
+  if (pointer >= GRID_HEIGHT - 1 && selectionState == 1) { pointer = GRID_HEIGHT - 1; }
+
+  if (x < 1023) {
+    delay(200);
+  }
 }
 
 /*  --------------------------------------------
@@ -248,6 +267,36 @@ void toggleItemGrid(int x, int y) {
   items[x][y] = !items[x][y];
 }
 
+void showItemGrid() {
+  for(int y = 0; y < GRID_HEIGHT; y++) {
+    for(int x = 0; x < GRID_WIDTH; x++) {
+      Serial.print(items[x][y]);
+    }
+    Serial.println();
+  }
+}
+
+// Called every loop() cycle. Updates the LEDs showing which item slots are occupied
+void updateItemLEDs() {
+  
+  // Note that output ports 3-5 are for rows, 6-7 are for columns 
+  // Updates from top to bottom, left to right
+  for(int y = 3; y < 5; y++) {
+    digitalWrite(y, HIGH);   // Prepares row to be written to
+    
+    for(int x = 6; x < 7; x++) {
+      if (items[x][y]) {
+        digitalWrite(x, HIGH);
+        delay(30);
+        digitalWrite(x, LOW);
+      }
+    }
+    
+    digitalWrite(y, LOW);   // Disables row
+  }
+  
+}
+
 /*  --------------------------------------------
     -------   Button handlers
     -------------------------------------------- */
@@ -255,8 +304,6 @@ void toggleItemGrid(int x, int y) {
 void buttonPushed() {
   lastInputVoltage = analogRead(BUTTON_INPUT);
   lastInputTime = timeSinceReset();
-
-  Serial.println("BUTTON PUSHED!!!!!!!!");
 }
 
 // Returns the ID of the last button that was pressed,
@@ -285,14 +332,15 @@ long timeSinceLastButton() {
 
 long timeSinceReset() {
   // 250 clock cycles per millisecond with default scaling factor
-  return (timerOverflow * TIMER_SIZE + TCNT1) / 250;
+  return (timerOverflow * TIMER_RESET_INTERRUPT + TCNT1) / TIMER_FREQUENCY;
 }
 
 void resetTimer() {
   TCNT1 = 0;
+  timerOverflow = 0;
 }
 
-// Called when the timer reaches 10000
+// Called when the timer reaches TIMER_RESET_INTERRUPT
 ISR (TIMER1_COMPA_vect) {
  timerOverflow++;
  TCNT1 = 0;
