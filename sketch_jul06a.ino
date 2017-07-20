@@ -23,7 +23,7 @@ char guestPasscodes[][CODE_LENGTH] = {  // Array of guest passcodes with length 
 };
 byte currentGuestPasscode = 0;          // Index of current code being used
 byte codeNumsEntered = 0;               // How many passcode buttons pressed
-int keyPressTimes[CODE_LENGTH] = {0, 0, 0, 0, 0};
+long keyPressTimes[CODE_LENGTH] = {0, 0, 0, 0, 0};
 
 
 // Accessing item - LED display
@@ -67,13 +67,13 @@ const byte TIMEOUT_CYCLE_PASSCODE = 20; // in seconds
 
 volatile long timerOverflow0 = 0;
 const int SCALING_FACTOR_0 = 1024;                      // TCCR0B |= 5, scaling factor # of cycles before TCNT0 increments
-const int TIMER0_FREQUENCY = 16000 / SCALING_FACTOR_0;  // Timer clock frequency in cycles per millisecond
+const int TIMER0_FREQUENCY = 16000 / SCALING_FACTOR_0;  // Timer clock frequency - 15.625 cycles per millisecond
 const unsigned int TIMER0_RESET_INTERRUPT = 200;        // Triggers interrupt to increment overflow count, Actual max is 255
 
 volatile long timerOverflow2 = 0;
 const int SCALING_FACTOR_2 = 256;                       // TCCR2B |= 6
-const int TIMER2_FREQUENCY = 16000 / SCALING_FACTOR_2;  // Timer clock frequency in cycles per millisecond
-const unsigned int TIMER2_RESET_INTERRUPT = 200;        // Actual max is 255
+const int TIMER2_FREQUENCY = 16000 / SCALING_FACTOR_2;  // Timer clock frequency - 62.5 cycles per millisecond
+const unsigned int TIMER2_RESET_INTERRUPT = 200;        // Actual max is 255f
 
 
 /*  --------------------------------------------
@@ -145,7 +145,7 @@ void loop() {
   updateItemLEDs();
 
   if (!isKeyPushed && analogRead(INPUT_ANALOG) < 500) {
-    //keyPressTimes[codeNumsEntered] = timeSinceReset();
+    keyPressTimes[codeNumsEntered] = timeSinceReset();
     
     lastKeyPressed = getButton(analogRead(INPUT_ANALOG));
     isKeyPushed = true;
@@ -317,7 +317,10 @@ void updateItemLEDs() {
     -------------------------------------------- */
 
 void buttonPushed() {       // button interrupt, called on falling signal
-  if (state == NONE) setState(INPUT_PASSCODE);
+  if (state == NONE) {
+    setState(INPUT_PASSCODE);
+    resetTimer();
+  }
   
   lastInputTime = timeSinceReset(); // Timer0 - buttons
   TCCR2B = 0;     // Stops counting guest password change
@@ -392,6 +395,11 @@ ISR (TIMER2_COMPA_vect) {
     -------------------------------------------- */
 
 void lightShow() {
+  for (byte i = 0; i < CODE_LENGTH; i++) {
+    wait(keyPressTimes[i] - (i == 0 ? 0 : keyPressTimes[i - 1]));
+    flashLED(1, 1);
+  }
+  
   for (byte i = 0; i < 10; i++) {
     digitalWrite(OUTPUT_ACTIVE_CODE, HIGH);
     wait(50);
