@@ -1,124 +1,139 @@
-#include <LiquidCrystal.h>
 #include <Arduino.h>
+#include <Servo.h>
 
 /*  --------------------------------------------
     -------   Declaring constants
     -------------------------------------------- */
 
-// Keypad
-const char FIRST_VAL = 'a';
-const char LAST_VAL = '_';
-enum KEY {KEY_NONE, 
-          KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9,
-          KEY_ADD_ITEM, KEY_GUEST_MODE, KEY_ADMIN_MODE
+// Botton keypad
+enum KEY {KEY_NONE,                     // NONE: if nothing is going on, last button has been processed
+          KEY_1, KEY_2, KEY_3, KEY_4,   // For buttons that were pressed
+          KEY_RESET, KEY_LOCK           // reset, lock
 };
+bool isKeyPushed = false;               // Whether button is currently pressed / held down
 
 
 // Safe combination
-const byte CODE_LENGTH = 6;
-String adminPasscode = "123456";
-String guestPasscodes[] = {"836204", "273027", "284027", "194629", "957368", "325492"};
-
-//char adminPasscode[] = {1, 2, 3, 4, 5, 6};	// this is alternative to array of strings
-//char* guestPasscodes[] = {
-  //(char[]){1, 2, 3, 4, 5, 6},
-  //(char[]){1, 2, 3, 4, 5, 6},
-//};
-
-KEY codeEntry[CODE_LENGTH];
-byte codeNumsEntered = 0;
+const byte CODE_LENGTH = 5;
+const byte GUEST_PASSCODES = 3;
+char guestPasscodes[][CODE_LENGTH] = {  // Array of guest passcodes with length of 5 numbers
+  {1, 3, 3, 4, 2},
+  {2, 4, 3, 4, 2},
+  {1, 1, 2, 4, 3},
+};
+byte currentGuestPasscode = 0;          // Index of current code being used
+byte codeNumsEntered = 0;               // How many passcode buttons pressed
+int keyPressTimes[CODE_LENGTH] = {0, 0, 0, 0, 0};
 
 
-// Adding item 
-const byte GRID_WIDTH = 3;
-const byte GRID_HEIGHT = 2;
-const byte SCREEN_LIMIT = 12;     // Number of characters which can be displayed in one row of the LED
-int selectionState = 0;           // O if choosing x, 1 if choosing y
-int gridSelectX = -1;
-int gridSelectY = -1;
+// Accessing item - LED display
+const int GRID_WIDTH = 3;
+const int GRID_HEIGHT = 3;
+byte gridSelectX;
+byte gridSelectY;
 
 bool items[][GRID_WIDTH] = {
-  {false, false, false},
-  {false, false, false},
-  {false, false, false},
-}; // Item matrix
+  {true, true, true},
+  {true, false, true},
+  {true, true, true},
+};
 
 
 
 // Arduino ports
-const byte BUTTON_INPUT = A0;
-const byte INTERRUPT_INPUT = 0;
+const byte INPUT_ANALOG = A0;       // Buttons
+const byte INPUT_INTERRUPT = 2;     // Buttons
 
-const byte OUTPUT_LOCKED = 10;
+const byte OUTPUT_ACTIVE_CODE = 9;  // LED if currently entering code
+const byte OUTPUT_SERVO = 12;       // Servo
+
+
+
+// Servo
+Servo servo;
 
 
 
 // Input
-enum STATE {NONE, INPUT_ADMIN, INPUT_GUEST, RESET_PASSCODE, ADD_ITEM};
-volatile byte lastInputVoltage = 0; // Voltage recorded from last button pressed
-volatile long lastInputTime = 0;    // Time recorded at last button press 
+enum STATE {NONE, INPUT_PASSCODE, ACCESS_ITEM};
+volatile long lastInputTime = 0;     // Time recorded at last key press
+KEY lastKeyPressed = KEY_NONE;       // Last key pressed
+
 
 
 // Timer
-const int TIMEOUT = 30; // in seconds
+const byte TIMEOUT_INPUT = 10;          // in seconds
+const byte TIMEOUT_CYCLE_PASSCODE = 20; // in seconds
 
-volatile long timerOverflow = 0;
+volatile long timerOverflow0 = 0;
+const int SCALING_FACTOR_0 = 1024;                      // TCCR0B |= 5, scaling factor # of cycles before TCNT0 increments
+const int TIMER0_FREQUENCY = 16000 / SCALING_FACTOR_0;  // Timer clock frequency in cycles per millisecond
+const unsigned int TIMER0_RESET_INTERRUPT = 200;        // Triggers interrupt to increment overflow count, Actual max is 255
 
-const int SCALING_FACTOR = 256;
-const int TIMER_FREQUENCY = 16000 / SCALING_FACTOR;  // Timer clock frequency in cycles per millisecond
-const long TIMER_RESET_INTERRUPT = 65536 / 2;
+volatile long timerOverflow2 = 0;
+const int SCALING_FACTOR_2 = 256;                       // TCCR2B |= 6
+const int TIMER2_FREQUENCY = 16000 / SCALING_FACTOR_2;  // Timer clock frequency in cycles per millisecond
+const unsigned int TIMER2_RESET_INTERRUPT = 200;        // Actual max is 255
 
 
 /*  --------------------------------------------
     -------   Safe state variables
     -------------------------------------------- */
 
-STATE state;  // Current state safe is in (e.g.: guest mode, reset passcode, etc.)
-bool locked;  // Is safe currently locked
-bool validPasscode = false; // Whether passcode entered was correct
-
-bool shouldPrint = false;
-
-
-
-/*  --------------------------------------------
-    -------   LCD Display setup
-    -------------------------------------------- */
-
-LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
-
-int pointer = 0;  // 0 is "A"
-String userInput = "";
+STATE state = NONE;  // Current state safe is in (e.g.: guest mode, reset passcode, etc.)
+bool locked = true;         // Is safe currently locked
+bool validPasscode = true; // Whether passcode entered was correct
 
 
 
 void setup() {
   Serial.begin(9600);
   
-  locked = true;
-  state = ADD_ITEM;
-
   cli();  // Disables interrupt
 
-  for(int i = 1; i <= 5; i++) {   pinMode(i, OUTPUT);   }
+  // Configure LED display
+  pinMode(3, OUTPUT); // Row 1
+  pinMode(4, OUTPUT); // Row 2
+  pinMode(5, OUTPUT); // Row 3
+  pinMode(6, OUTPUT); // Col 1
+  pinMode(7, OUTPUT); // Col 2
+  pinMode(8, OUTPUT); // Col 3
+  digitalWrite(6, HIGH);
+  digitalWrite(7, HIGH);
+  digitalWrite(8, HIGH);
+  digitalWrite(3, LOW);
+  digitalWrite(4, LOW);
+  digitalWrite(5, LOW);
+    
+  servo.attach(OUTPUT_SERVO);         // Servo now uses inputted pin
+  pinMode(INPUT_ANALOG, INPUT);       // buttons
+  pinMode(INPUT_INTERRUPT, INPUT);    // buttons
 
-  // Reset all Timer1 registers
-  TCNT1 = 0;
-  TCCR1A = 0;
-  TCCR1B = 0;
+  // Reset all Timer0 and Timer2 registers
+  TCNT0 = 0;
+  TCCR0A = 0;
+  TCCR0B = 0;
 
-  // Trigger timer reset at 
-  OCR1A = TIMER_RESET_INTERRUPT;
-  TCCR1B |= (4 >> 0);   // Default setting on Timer1 is 4 (100)
+  TCNT2 = 0;
+  TCCR2A = 0;
+  TCCR2B = 0;
 
-  TIMSK1 |= (7 >> 0);
+  // Timer0
+  OCR0A = TIMER0_RESET_INTERRUPT; // output compare register - triggers interrupt before overflow
+  TCCR0B |= (5 >> 0);   // Default setting on Timer0 is 5 (101)
+  TIMSK0 |= (7 >> 0);   // interrupt flag (if on, enable interrupt)
+
+  // Timer2
+  OCR2A = TIMER2_RESET_INTERRUPT;
+  TCCR2B |= (6 >> 0);   // Default setting on Timer2 is 6 (110)
+  TIMSK2 |= (7 >> 0);
 
   sei();  // Enables interrupts
 
-  // attachInterrupt(INTERRUPT_INPUT, buttonPushed, HIGH);
-  lcd.begin(16,2);
+  attachInterrupt(INPUT_INTERRUPT - 2, buttonPushed, FALLING);
+  Serial.println(F("BEGIN"));
 
-  Serial.println("BEGIN");
+  lock();
 }
 
 /*  --------------------------------------------
@@ -126,126 +141,123 @@ void setup() {
     -------------------------------------------- */
     
 void loop() {
-  // pressing guest button on safe's display starts guestMode function
-  // pressing admin button on safe's display starts adminMode function
 
-  // automatically locks after X seconds once safe door is closed
+  updateItemLEDs();
+
+  if (!isKeyPushed && analogRead(INPUT_ANALOG) < 500) {
+    //keyPressTimes[codeNumsEntered] = timeSinceReset();
+    
+    lastKeyPressed = getButton(analogRead(INPUT_ANALOG));
+    isKeyPushed = true;
+    Serial.print(lastKeyPressed);
+  }
+  else if (isKeyPushed && analogRead(INPUT_ANALOG) > 500) {
+    isKeyPushed = false;
+  }
   
   if (state != NONE) {
 
-    // If we are checking input for a key combination
-    if (state == INPUT_ADMIN || state == INPUT_GUEST) {
+    // If checking input for a key combination
+    if (state == INPUT_PASSCODE) {
       updateInputCombination();
     }
 
-    else if (state == ADD_ITEM) {
-      updateAddItem();
+    // If prompting user to enter slot of item being accessed
+    else if (state == ACCESS_ITEM) {
+      updateAccessItem();
+      showItemGrid();
+
+      setState(NONE);
     }
   }
 
-  
+  // If there is no passcode being inputted, check for changing guest passcode
+  else {
+    if (guestCodeResetTime() > TIMEOUT_CYCLE_PASSCODE * 1000) {  
+      currentGuestPasscode++; 
+      currentGuestPasscode %= GUEST_PASSCODES; // cycle back to 1st passcode
+
+      Serial.println();
+      Serial.print("CHANGING PASSCODES: ");
+      for (byte i = 0; i < CODE_LENGTH; i++)  Serial.print(char(guestPasscodes[currentGuestPasscode][i] + int('0')));
+      Serial.println();
+
+      resetGuestCodeCount();
+    }
+  }  
 }
 
 void updateInputCombination() {
 
-  lastInputVoltage = analogRead(BUTTON_INPUT);
-  
-  // If the last button pushed was a number
-  if (getLastButton() >= KEY_1 && getLastButton() <= KEY_9) {
+  if (timeSinceLastButton() > TIMEOUT_INPUT * 1000) setState(NONE);
+  if (lastKeyPressed == KEY_NONE) return;
 
-    if (state == INPUT_ADMIN) {
-       if (getLastButton() != codeEntry[codeNumsEntered]) validPasscode = false;
-    }
-    else if (state == INPUT_GUEST) {
-       if (getLastButton() != adminPasscode[codeNumsEntered]) validPasscode = false;
-    }
+  // If the last button pushed was a number
+  if (lastKeyPressed >= KEY_1 && lastKeyPressed <= KEY_4) {
+    digitalWrite(OUTPUT_ACTIVE_CODE, HIGH);           // if currently entering passcode, LED is on
+    
+    if (lastKeyPressed != guestPasscodes[currentGuestPasscode][codeNumsEntered]) validPasscode = false;
     
     codeNumsEntered++;
 
     // If all numbers have been entered, check if passcode is correct
-    if (codeNumsEntered == CODE_LENGTH && validPasscode) unlock();
+    if (codeNumsEntered == CODE_LENGTH && validPasscode) {
+      unlock();
+      state = ACCESS_ITEM;
+    }
+  }
+  
+  else if (lastKeyPressed == KEY_LOCK) {
+    lock();
+    setState(NONE);
+  }
+  else if (lastKeyPressed == KEY_RESET) setState(NONE);
+
+  lastKeyPressed = KEY_NONE; // Resets key so it does not get read twice  
+}
+
+void setState(STATE newState) {
+  state = newState;
+  
+  if (state == NONE) {
+    digitalWrite(OUTPUT_ACTIVE_CODE, LOW);
+    state = NONE;
+    codeNumsEntered = 0;
+    validPasscode = true;
+    TCCR2B |= (6 >> 0);   // continue counting again for passcode change (do not want to change while entering) (TCCR2B = 0 stops)
+    lastKeyPressed = KEY_NONE;
+  }
+}
+
+// Prompts user to enter slot ID being accessed
+void updateAccessItem() {
+  // Loops until valid input
+  while (true) {
+
+    Serial.println();
+
+    Serial.println(F("Enter Grid Row."));
+    waitForInput();
+    gridSelectX = int(Serial.read()) - int('A');   // Converts string into grid square e.g.: (A2 -> 0, 1)
+
+    Serial.println(F("Enter Grid Column."));
+    waitForInput();
+    gridSelectY = int(Serial.read()) - int('1');
     
-  }
-  else {
-    // Reset state
-  }
-}
 
-// Updates a user adding an item to the safe
-void updateAddItem() {
-
-  updateLCDOutput();
-  updateLCDInput();
-}
-
-void updateLCDOutput() {
-  String alphabet = "";
-
-  // Grid uses alphabet horizontally, numbers vertically
-  if (selectionState == 0) {
-    for (int i = 0; i < GRID_WIDTH; i++) {
-      if (pointer == i)   { alphabet += char(i + int('A')); }
-      else                { alphabet += char(i + int('a')); }
-    }
-  }
-  else {
-    for (int i = 0; i < GRID_WIDTH; i++) {
-      if (pointer == i)   { alphabet += char(i + int('1')); }
-    }
-  }
-  
-  lcd.setCursor(0, 0);
-  lcd.print(F("Add Item: "));
-  
-  if (gridSelectX != -1) {                        lcd.print(char(gridSelectX + int('A'))); }
-  if (gridSelectY != -1) { lcd.setCursor(11, 0);  lcd.print(char(gridSelectY + int('1'))); }
-  
-  lcd.setCursor(0, 1);
-  lcd.print(alphabet);
-}
-
-void updateLCDInput() {
-  int x = analogRead(0);
-  
-  if (x < 100) {
-    pointer++;    // Go right
-  }
-  else if (x < 200) {
-    if (selectionState == 0) { 
-      gridSelectX = pointer;
-      selectionState++;
-      lcd.clear();
-    }
-    
-    else if (selectionState == 1) { 
-      gridSelectY = pointer; 
+    if ((gridSelectX >= GRID_WIDTH || gridSelectX < 0) || (gridSelectY >= GRID_HEIGHT || gridSelectY < 0))
+      Serial.println(F("INVALID SQUARE"));
+    else {
       toggleItemGrid(gridSelectX, gridSelectY);
-      
-      updateLCDOutput(); // So user can see which grid spot they've selected
-      delay(500);
-      
-      gridSelectX = -1;
-      gridSelectY = -1;
-
-      selectionState = 0;
-
-      showItemGrid();
-      lcd.clear();
+      return;
     }
     
-    pointer = 0;
   }
-  
-  else if (x < 600) {
-    pointer--;    // Go left
-  }
+}
 
-  if (pointer < 0) {  pointer = 0; }
-  if (pointer >= GRID_WIDTH - 1 && selectionState == 0) { pointer = GRID_WIDTH - 1; }
-  if (pointer >= GRID_HEIGHT - 1 && selectionState == 1) { pointer = GRID_HEIGHT - 1; }
-
-  if (x < 1023) {
-    delay(200);
+void waitForInput() {
+  while (!Serial.available()) {
+    updateItemLEDs();
   }
 }
 
@@ -254,23 +266,28 @@ void updateLCDInput() {
     -------------------------------------------- */
 
 void unlock() {
+  lightShow();
+  
   locked = false;
-  digitalWrite(OUTPUT_LOCKED, LOW);
+  servo.write(0); // Rotates lock so box is no longer closed
+  setState(ACCESS_ITEM);
 }
 
 void lock() {
+  lightShow();
+  
   locked = true;
-  digitalWrite(OUTPUT_LOCKED, HIGH);
+  servo.write(90); // Rotates lock so box is closed
 }
 
-void toggleItemGrid(int x, int y) {
+void toggleItemGrid(int x, int y) { // toggle LED
   items[x][y] = !items[x][y];
 }
 
-void showItemGrid() {
+void showItemGrid() { // feedback to serial monitor
   for(int y = 0; y < GRID_HEIGHT; y++) {
     for(int x = 0; x < GRID_WIDTH; x++) {
-      Serial.print(items[x][y]);
+      Serial.print(items[y][x]);
     }
     Serial.println();
   }
@@ -279,44 +296,44 @@ void showItemGrid() {
 // Called every loop() cycle. Updates the LEDs showing which item slots are occupied
 void updateItemLEDs() {
   
-  // Note that output ports 3-5 are for rows, 6-7 are for columns 
+  // Note that output ports 3-5 are for rows, 6-8 are for columns 
   // Updates from top to bottom, left to right
-  for(int y = 3; y < 5; y++) {
-    digitalWrite(y, HIGH);   // Prepares row to be written to
+  for(int y = 0; y < 3; y++) {
+    digitalWrite(y + 6, LOW);   // Prepares row to be written to
     
-    for(int x = 6; x < 7; x++) {
-      if (items[x][y]) {
-        digitalWrite(x, HIGH);
-        delay(30);
-        digitalWrite(x, LOW);
+    for(int x = 0; x < 3; x++) {
+      if (items[y][x]) {
+        digitalWrite(x + 3, HIGH);
+        digitalWrite(x + 3, LOW);
       }
     }
     
-    digitalWrite(y, LOW);   // Disables row
+    digitalWrite(y + 6, HIGH);   // Disables row
   }
-  
 }
 
 /*  --------------------------------------------
-    -------   Button handlers
+    -------   Button handlers, interrupt
     -------------------------------------------- */
 
-void buttonPushed() {
-  lastInputVoltage = analogRead(BUTTON_INPUT);
-  lastInputTime = timeSinceReset();
+void buttonPushed() {       // button interrupt, called on falling signal
+  if (state == NONE) setState(INPUT_PASSCODE);
+  
+  lastInputTime = timeSinceReset(); // Timer0 - buttons
+  TCCR2B = 0;     // Stops counting guest password change
 }
 
-// Returns the ID of the last button that was pressed,
-// based on the last read voltage
-KEY getLastButton() {
+// Returns the ID of the last button that was pressed, based on the last read voltage
+KEY getButton(int inputVoltage) {
   KEY lastButton = KEY_NONE;
   
-  if (lastInputVoltage > 0)       {   lastButton = KEY_1; }
-  else if (lastInputVoltage < 20) {   lastButton = KEY_1; }
-  else if (lastInputVoltage < 30) {   lastButton = KEY_1; }
-  // TODO: measure voltages, extend to all keys
-
-  lastInputVoltage = 0;
+  if (inputVoltage < 40)        {   lastButton = KEY_LOCK; }
+  else if (inputVoltage < 70)   {   lastButton = KEY_RESET; }
+  
+  else if (inputVoltage < 170)    {   lastButton = KEY_4; }
+  else if (inputVoltage < 260)    {   lastButton = KEY_3; }
+  else if (inputVoltage < 340)    {   lastButton = KEY_2; }
+  else if (inputVoltage < 460)    {   lastButton = KEY_1; }
   
   return lastButton;
 }
@@ -325,6 +342,12 @@ KEY getLastButton() {
     -------   Timer handlers
     -------------------------------------------- */
 
+// Wait function, same as delay
+void wait(int milliseconds) {
+  long initialTime = timeSinceReset();
+  while (timeSinceReset() < milliseconds + initialTime) {}
+}
+
 // Returns time since last button was pushed
 long timeSinceLastButton() {
   return timeSinceReset() - lastInputTime;
@@ -332,17 +355,68 @@ long timeSinceLastButton() {
 
 long timeSinceReset() {
   // 250 clock cycles per millisecond with default scaling factor
-  return (timerOverflow * TIMER_RESET_INTERRUPT + TCNT1) / TIMER_FREQUENCY;
+  return (timerOverflow0 * TIMER0_RESET_INTERRUPT + TCNT0) / TIMER0_FREQUENCY;
 }
 
 void resetTimer() {
-  TCNT1 = 0;
-  timerOverflow = 0;
+  TCNT0 = 0;
+  timerOverflow0 = 0;
+}
+
+// Called when the timer reaches TIMER_RESET_INTERRUPT // uses timer0 for passcode timeout
+ISR (TIMER0_COMPA_vect) {   // interrupt at 200 overflow, counts into timerOverflow0
+ timerOverflow0++;
+ TCNT0 = 0;
+}
+
+
+
+long guestCodeResetTime() { // uses timer2 for guest code reset
+  // 250 clock cycles per millisecond with default scaling factor
+  return (timerOverflow2 * TIMER2_RESET_INTERRUPT + TCNT2) / TIMER2_FREQUENCY;
+}
+
+void resetGuestCodeCount() {
+  TCNT2 = 0;
+  timerOverflow2 = 0;
 }
 
 // Called when the timer reaches TIMER_RESET_INTERRUPT
-ISR (TIMER1_COMPA_vect) {
- timerOverflow++;
- TCNT1 = 0;
+ISR (TIMER2_COMPA_vect) {
+ timerOverflow2++;
+ TCNT2 = 0;
+}
+
+/*  --------------------------------------------
+    -------   Light Show
+    -------------------------------------------- */
+
+void lightShow() {
+  for (byte i = 0; i < 10; i++) {
+    digitalWrite(OUTPUT_ACTIVE_CODE, HIGH);
+    wait(50);
+    digitalWrite(OUTPUT_ACTIVE_CODE, LOW);
+    wait(10);
+  }
+
+  for (byte i = 0; i < 10; i++) {
+    flashLED(0, 0);
+    flashLED(1, 0);
+    flashLED(2, 0);
+    flashLED(2, 1);
+    flashLED(2, 2);
+    flashLED(1, 2);
+    flashLED(0, 2);
+    flashLED(0, 1);
+  }
+}
+
+void flashLED(int x, int y) {
+  digitalWrite(x + 3, HIGH);
+  digitalWrite(y + 6, LOW);
+  wait(20);
+  digitalWrite(x + 3, LOW);
+  digitalWrite(y + 6, HIGH);
+  wait(10);
 }
 
